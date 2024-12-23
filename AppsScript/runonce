@@ -1,0 +1,103 @@
+// Utility function to return the currently deployed WebApp URL
+function getCallbackUrl() {
+  const deploymentId = ScriptApp.getService().getUrl();
+  if (deploymentId) {
+    return deploymentId; // Deployed script's URL
+  } else {
+    throw new Error("Script is not deployed as a web app.");
+  }
+}
+
+// Utility function to generate a random state string for security
+function generateRandomState() {
+  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
+/////////////////////////////////////////////////////////////////
+
+//STEP1 - run this manually
+function generateAuthorizationUrl() {
+  const clientId = TWITTER_CLIENT_ID; // Replace with your actual Client ID
+  const redirectUri = getCallbackUrl(); // Replace with your callback URL
+  const scopes = "tweet.read tweet.write offline.access"; // Requested scopes
+  const state = generateRandomState(); // Add a random string to prevent CSRF attacks
+  const codeChallenge = "plain-text-challenge"; // Use "plain" as the code_challenge_method for simplicity
+
+  const authUrl = `https://twitter.com/i/oauth2/authorize?` +
+    `response_type=code` +
+    `&client_id=${encodeURIComponent(clientId)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&scope=${encodeURIComponent(scopes)}` +
+    `&state=${encodeURIComponent(state)}` +
+    `&code_challenge=${encodeURIComponent(codeChallenge)}` +
+    `&code_challenge_method=plain`;
+
+  Logger.log(`Redirect to: ${authUrl}`);
+  return authUrl;
+}
+
+//when successful, this will finally say: "Authorization successful. You can close this window." in the browser
+
+function handleOAuthCallback(authCode) {
+  Logger.log("Received authorization code: %s", authCode);
+
+  // Exchange the authorization code for tokens
+  const tokens = exchangeCodeForTokens(authCode);
+
+  if (tokens) {
+    Logger.log("Successfully retrieved tokens: %s", JSON.stringify(tokens));
+    
+    // Store tokens securely
+    const scriptProperties = PropertiesService.getScriptProperties();
+    scriptProperties.setProperty("ACCESS_TOKEN", tokens.access_token);
+    scriptProperties.setProperty("REFRESH_TOKEN", tokens.refresh_token);
+    scriptProperties.setProperty("EXPIRES_AT", new Date(Date.now() + tokens.expires_in * 1000).toISOString());
+  } else {
+    Logger.log("Failed to retrieve tokens.");
+  }
+}
+
+//STEP2
+function exchangeCodeForTokens(authCode) {
+  const clientId = TWITTER_CLIENT_ID; // Replace with your actual Client ID
+  const clientSecret = TWITTER_CLIENT_SECRET; // Replace with your actual Client Secret
+  const redirectUri = getCallbackUrl();; // Replace with your callback URL
+
+  const url = "https://api.twitter.com/2/oauth2/token";
+  const payload = {
+    code: authCode,
+    grant_type: "authorization_code",
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    code_verifier: "plain-text-challenge", // Match the value from the previous step
+  };
+
+  const encodedPayload = Object.keys(payload)
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(payload[key])}`)
+    .join("&");
+
+  const basicAuth = Utilities.base64Encode(`${clientId}:${clientSecret}`);
+  const options = {
+    method: "post",
+    contentType: "application/x-www-form-urlencoded",
+    payload: encodedPayload,
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+    },
+    muteHttpExceptions: true,
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  const responseData = JSON.parse(response.getContentText());
+
+  if (response.getResponseCode() === 200) {
+    // Store tokens securely in script properties
+    PropertiesService.getScriptProperties().setProperty("ACCESS_TOKEN", responseData.access_token);
+    PropertiesService.getScriptProperties().setProperty("REFRESH_TOKEN", responseData.refresh_token);
+    PropertiesService.getScriptProperties().setProperty("EXPIRES_AT", new Date(Date.now() + responseData.expires_in * 1000).toISOString());
+
+    Logger.log("Tokens successfully retrieved and stored.");
+  } else {
+    Logger.log(`Error fetching tokens: ${response.getContentText()}`);
+  }
+}

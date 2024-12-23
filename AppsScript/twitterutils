@@ -1,0 +1,162 @@
+function generateTweet(tweetBody = "Howdy") {
+  Logger.log("generateTweet.");
+
+  initProperties();
+  const twitterTokens = refreshAndGetTokens();
+  if (!twitterTokens) {
+    Logger.log("ERROR: Did not receive Twitter tokens, aborting execution.");
+    return;
+  }
+
+  // Now we tweet it
+  const didSucceed = sendTweetToTwitter(tweetBody, twitterTokens.accessToken);
+
+  if (didSucceed) {
+    Logger.log("SUCCESS: Tweet posted successfully.");
+  }
+}
+
+function initProperties() {
+  Logger.log("initProperties.");
+
+  const scriptProperties = PropertiesService.getScriptProperties();
+  if (!scriptProperties.getProperty("ACCESS_TOKEN")) {
+    scriptProperties.setProperty("ACCESS_TOKEN", TWITTER_BEARER_TOKEN);
+  }
+  if (!scriptProperties.getProperty("REFRESH_TOKEN")) {
+    scriptProperties.setProperty("REFRESH_TOKEN", TWITTER_REFRESH_TOKEN);
+  }
+  if (!scriptProperties.getProperty("EXPIRES_AT")) {
+    scriptProperties.setProperty("EXPIRES_AT", TWITTER_EXPIRES_AT);
+  }
+}
+
+function getTokens() {
+  Logger.log("getTokens.");
+
+  const scriptProperties = PropertiesService.getScriptProperties();
+  return {
+    accessToken: scriptProperties.getProperty("ACCESS_TOKEN"),
+    refreshToken: scriptProperties.getProperty("REFRESH_TOKEN"),
+    expiresAt: new Date(scriptProperties.getProperty("EXPIRES_AT")),
+  };
+}
+
+function refreshAndGetTokens() {
+  Logger.log("refreshAndGetTokens.");
+
+  const tokens = getTokens();
+  const now = new Date();
+
+  if (now > tokens.expiresAt) {
+    Logger.log("Access token expired. Refreshing...");
+    const refreshedTokens = refreshToken(tokens.refreshToken);
+    if (refreshedTokens) {
+      const scriptProperties = PropertiesService.getScriptProperties();
+      scriptProperties.setProperty("ACCESS_TOKEN", refreshedTokens.access_token);
+      scriptProperties.setProperty("REFRESH_TOKEN", refreshedTokens.refresh_token);
+      const expiresAt = new Date();
+      expiresAt.setSeconds(expiresAt.getSeconds() + refreshedTokens.expires_in);
+      scriptProperties.setProperty("EXPIRES_AT", expiresAt.toISOString());
+      return getTokens();
+    } else {
+      Logger.log("ERROR: Unable to refresh tokens.");
+      return null;
+    }
+  }
+  return tokens;
+}
+
+function refreshToken(refreshToken) {
+  Logger.log("refreshToken.");
+
+  const url = "https://api.twitter.com/2/oauth2/token";
+  const payload = {
+    refresh_token: refreshToken,
+    grant_type: "refresh_token",
+    client_id: TWITTER_CLIENT_ID,
+  };
+
+  const authorizationHeader = `Basic ${Utilities.base64Encode(`${TWITTER_CLIENT_ID}:${TWITTER_CLIENT_SECRET}`)}`;
+  const encodedPayload = Object.keys(payload)
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(payload[key])}`)
+    .join("&");
+
+  const options = {
+    method: "post",
+    contentType: "application/x-www-form-urlencoded",
+    payload: encodedPayload,
+    headers: {
+      Authorization: authorizationHeader,
+    },
+    muteHttpExceptions: true,
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  if (response.getResponseCode() === 200) {
+    Logger.log("Access token refreshed successfully.");
+    return JSON.parse(response.getContentText());
+  } else {
+    Logger.log("ERROR: Unable to refresh access token.");
+    Logger.log(`Response code: ${response.getResponseCode()}`);
+    Logger.log(`Response body: ${response.getContentText()}`);
+    return null;
+  }
+}
+
+function sendTweetToTwitter(message, accessToken) {
+  Logger.log("sendTweetToTwitter.");
+
+  const url = "https://api.twitter.com/2/tweets";
+  const payload = { text: message };
+
+  const options = {
+    method: "POST",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    muteHttpExceptions: true,
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+  if (response.getResponseCode() === 200 || response.getResponseCode() === 201) {
+    Logger.log(`Successfully posted Tweet: '${message}'`);
+    return true;
+  } else {
+    Logger.log(`ERROR: Unable to post tweet: '${message}'`);
+    Logger.log(`Response code: ${response.getResponseCode()}`);
+    Logger.log(`Response body: ${response.getContentText()}`);
+    return false;
+  }
+}
+
+
+function postTweet(message) {
+  const accessToken = PropertiesService.getScriptProperties().getProperty("ACCESS_TOKEN");
+
+  const url = "https://api.twitter.com/2/tweets";
+  const payload = {
+    text: message,
+  };
+
+  const options = {
+    method: "POST",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    muteHttpExceptions: true,
+  };
+
+  const response = UrlFetchApp.fetch(url, options);
+
+  if (response.getResponseCode() === 200) {
+    Logger.log("Tweet posted successfully!");
+  } else {
+    Logger.log("Error posting tweet:");
+    Logger.log(response.getContentText());
+  }
+}
